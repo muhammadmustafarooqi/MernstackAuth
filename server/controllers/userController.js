@@ -2,15 +2,15 @@ import User from "../models/userModel.js";
 
 export const getUserData = async (req, res) => {
     try {
-        const {userId} = req.body; // Assuming user ID is stored in req.user
+        const userId = req.userId; // ✅ get from JWT decoded by userAuth
 
-        const user = await User.findById(userId); // Fetch user data from the database
+        const user = await User.findById(userId); // ✅ Get user
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
 
         res.status(200).json({
-            sucess: true,
+            success: true,
             userData: {
                 id: user._id,
                 name: user.name,
@@ -24,4 +24,4 @@ export const getUserData = async (req, res) => {
         console.error("Error fetching user data:", error);
         res.status(500).json({ message: "Internal server error" });
     }
-}
+};

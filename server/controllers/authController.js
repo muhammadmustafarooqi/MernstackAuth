@@ -1,7 +1,7 @@
 import User from "../models/userModel.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import transporter from "../config/nodeMailer.js";
+import sendEmail from "../utils/sendEmail.js";
 
 // Controller functions for user authentication
 
@@ -26,31 +26,34 @@ const registerController = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Create a new user
     const newUser = await User.create({
       name,
       email,
       password: hashedPassword,
     });
 
+    // Create a JWT token
     const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, {
       expiresIn: "7d",
     });
 
+    // Set the token in a cookie
     res.cookie("token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-    // sending welcome email
-    const mailOptions = {
-      from: process.env.SENDER_EMAIL,
-      to: email,
-      subject: "Welcome to MernsStack auth",
-      text: `Welcome to MernsStack auth! your account has been successfully created with this email id. ${email}. Please keep your password safe.`,
-    };
-    await transporter.sendMail(mailOptions);
+    // Send welcome email
+    // await sendEmail(
+    //   newUser.email,
+    //   "Welcome to Mernstack Auth 🎉",
+    //   `<p>Hi ${newUser.name},<br>Your account has been created successfully. Welcome aboard!</p>`
+    // );
 
+   
+    // Send response (No password in response!)
     return res.status(201).json({
       success: true,
       message: "User registered successfully",
@@ -58,7 +61,6 @@ const registerController = async (req, res) => {
         id: newUser._id,
         name: newUser.name,
         email: newUser.email,
-        password: newUser.password,
       },
     });
   } catch (error) {
@@ -84,30 +86,36 @@ const loginController = async (req, res) => {
   try {
     const user = await User.findOne({ email });
     console.log("User found:", user);
+
     // checking if user e xists
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "User not found. Please register first.",
       });
     }
     // checking if password matches
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).send("Invalid credentials");
+      return res.status(400).json({
+        success: false,
+        message: "Invalid credentials. Please try again.",
+      });
     }
     // creating jwt token
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
       expiresIn: "7d",
     });
+
+      // Step 5: Set cookie
     res.cookie("token", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // Set to true in production
+      secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-    console.log("Token generated:", token);
 
+    // Step 6: Send clean response
     return res.status(200).json({
       success: true,
       message: "Login successful",
@@ -116,9 +124,9 @@ const loginController = async (req, res) => {
         name: user.name,
         email: user.email,
         isAdmin: user.isAdmin,
-        token: token,
-        isVerified: user.isVerified,
+        isVerified: user.isAccountVerified,
       },
+      token,
     });
   } catch (error) {
     console.error("Error during login:", error);
@@ -139,6 +147,7 @@ const logoutController = (req, res) => {
       secure: process.env.NODE_ENV === "production", // Set to true in production
       sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
     });
+
     return res.status(200).json({
       success: true,
       message: "Logout successful",
@@ -154,34 +163,44 @@ const logoutController = (req, res) => {
 
 // This function sends a reset OTP to the user's email
 const sendResetOtp = async (req, res) => {
+
   const { email } = req.body;
+
+  // Validate email
   if (!email) {
     return res.status(400).json({
       success: false,
       message: "Email is required",
     });
   }
+
   try {
     const user = await User.findOne({ email });
+
+    // Check if user exists
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "User not found with this email",
       });
     }
+    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Store OTP and expiration time in user document
     user.resetOtp = otp;
     user.resetOtpExpireAt = Date.now() + 10 * 60 * 1000; // OTP valid for 10 minutes
     await user.save();
 
-    // send mail
-    const mailOptions = {
-      from: process.env.SENDER_EMAIL,
-      to: user.email,
-      subject: "Reset your password",
-      text: `Your password reset OTP is ${otp}. It is valid for 10 minutes.`,
-    };
-    await transporter.sendMail(mailOptions);
+   // Send OTP via email
+    await sendEmail(
+      user.email,
+      "Password Reset Request",
+      `<p>Hi ${user.name},</p>
+       <p>Your password reset OTP is: <b>${otp}</b>. It is valid for 10 minutes.</p>
+       <p>If you did not request this, please ignore this email.</p>`
+    );
+    // Send success response
     return res.status(200).json({
       success: true,
       message: "Reset OTP sent successfully",
@@ -195,9 +214,12 @@ const sendResetOtp = async (req, res) => {
     });
   }
 };
+
 // reset password controller
 const resetPasswordController = async (req, res) => {
+
   const { email, otp, newPassword } = req.body;
+
   // Validate email, otp, and newPassword
   if (!email || !otp || !newPassword) {
     return res.status(400).json({
@@ -207,6 +229,7 @@ const resetPasswordController = async (req, res) => {
   }
 
   try {
+    // Find user by email
     const user = await User.findOne({ email });
     // Check if user exists
     if (!user) {
@@ -215,14 +238,15 @@ const resetPasswordController = async (req, res) => {
         message: "User not found",
       });
     }
-    // when user is available
-    // Check if OTP is valid and not expired
-    if (user.resetOtp === "" || user.resetOtp !== otp) {
+
+       // Step 3: Validate OTP
+    if (user.resetOtp !== otp) {
       return res.status(400).json({
         success: false,
         message: "Invalid OTP",
       });
     }
+
     // if otp is expired
     if (user.resetOtpExpireAt < Date.now()) {
       return res.status(400).json({
@@ -233,11 +257,22 @@ const resetPasswordController = async (req, res) => {
 
     // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
+
     // Update user's password
     user.password = hashedPassword;
     user.resetOtp = "";
     user.resetOtpExpireAt = 0; // Clear OTP and expiration time
     await user.save();
+
+    // Send confirmation email
+    await sendEmail(
+      user.email,
+      "Password Changed Successfully",
+      `<p>Hi ${user.name},</p>
+       <p>Your password has been changed successfully. If this wasn't you, please contact support immediately.</p>`
+    );
+
+    // Send success response
     return res.status(200).json({
       success: true,
       message: "Password reset successfully",
@@ -248,112 +283,152 @@ const resetPasswordController = async (req, res) => {
       success: false,
       message: "Password reset failed",
     });
-    
-  }
-}
-
-
-const sendVerifyOtp = async (req, res) => {
-  try {
-    const { userId } = req.body;
-    const user = await User.findById(userId);
-
-    if (user.isAccountVerified) {
-      return res.status(400).json({
-        success: false,
-        message: "User is already verified",
-      });
-    }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    user.verifyOtp = otp;
-    user.verifyOtpExpireAt = Date.now() + 10 * 60 * 1000; // OTP valid for 10 minutes
-    await user.save();
-    // send mail
-    const mailOptions = {
-      from: process.env.SENDER_EMAIL,
-      to: user.email,
-      subject: "Verify your account",
-      text: `Your verification OTP is ${otp}. It is valid for 10 minutes.`,
-    };
-    await transporter.sendMail(mailOptions);
-    return res.status(200).json({
-      success: true,
-      message: "Verification OTP sent successfully",
-    });
-  } catch (error) {
-    console.error("Error sending verification OTP:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to send verification OTP",
-    });
   }
 };
 
-const verifyEmail = async (req, res) => {
-  const { userId, otp } = req.body;
-  // Validate userId and otp
-  if (!userId || !otp) {
+// This function sends a verification OTP to the user's email
+const sendVerifyOtp = async (req, res) => {
+  const { userId } = req.body;
+
+  if (!userId) {
     return res.status(400).json({
       success: false,
-      message: "User ID and OTP are required",
+      message: "User ID is required",
     });
   }
+
   try {
     const user = await User.findById(userId);
-    // Check if user exists
     if (!user) {
       return res.status(404).json({
         success: false,
         message: "User not found",
       });
     }
-    // Check if OTP is valid and not expired
-    if (user.verifyOtp === "" || user.verifyOtp !== otp) {
+
+    if (user.isAccountVerified) {
+      return res.status(400).json({
+        success: false,
+        message: "Your account is already verified",
+      });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.verifyOtp = otp;
+    user.verifyOtpExpireAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
+    await user.save();
+
+    await sendEmail(
+      user.email,
+      "Verify Your Account",
+      `<p>Hi ${user.name},</p>
+       <p>Your account verification OTP is: <b>${otp}</b>. It is valid for 10 minutes.</p>
+       <p>If you did not request this, please ignore it.</p>`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Verification OTP sent to your email",
+    });
+  } catch (error) {
+    console.error("Send Verify OTP Error:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send verification OTP. Please try again later.",
+    });
+  }
+};
+
+// This function verifies the user's email using the OTP
+const verifyEmail = async (req, res) => {
+  const { userId, otp } = req.body;
+
+  // Step 1: Validate input
+  if (!userId || !otp) {
+    return res.status(400).json({
+      success: false,
+      message: "User ID and OTP are required",
+    });
+  }
+
+  try {
+    // Step 2: Find user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Step 3: Check OTP validity
+    if (user.verifyOtp !== otp) {
       return res.status(400).json({
         success: false,
         message: "Invalid OTP",
       });
     }
-    // if otp is expired
+
     if (user.verifyOtpExpireAt < Date.now()) {
       return res.status(400).json({
         success: false,
         message: "OTP has expired",
       });
     }
-    // Mark user as verified
+
+    // Step 4: Mark user as verified
     user.isAccountVerified = true;
     user.verifyOtp = "";
     user.verifyOtpExpireAt = 0;
     await user.save();
+
+    // Optional: Confirmation email
+    await sendEmail(
+      user.email,
+      "Your Account Has Been Verified ✅",
+      `<p>Hi ${user.name},</p><p>Your account has been verified successfully. You can now access all features.</p>`
+    );
 
     return res.status(200).json({
       success: true,
       message: "Email verified successfully",
     });
   } catch (error) {
-    console.error("Error verifying email:", error);
+    console.error("Verify Email Error:", error.message);
     return res.status(500).json({
       success: false,
-      message: "Email verification failed",
+      message: "Failed to verify email. Please try again later.",
     });
   }
 };
+
 
 // This function checks if the user is authenticated
 const isAuthenticated = (req, res) => {
-
   try {
+    const userId = req.body.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: Invalid or expired token",
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message: "User is authenticated",
-      userId: req.body.userId, // User ID from the token
+      userId,
     });
   } catch (error) {
-    console.error('Token verification failed:', error);
-    return res.status(403).json({ success: false, message: 'Forbidden' });
+    console.error("isAuthenticated Error:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Authentication check failed",
+    });
   }
 };
+
 
 // Send OTP for account deletion
 const sendDeleteAccountOtp = async (req, res) => {
@@ -379,25 +454,20 @@ const sendDeleteAccountOtp = async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     // Use verifyOtp fields for deletion
-    user.verifyOtp = otp;
-    user.verifyOtpExpireAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+    user.resetOtp = otp;
+    user.resetOtpExpireAt = Date.now() + 10 * 60 * 1000; // valid 10 min
     await user.save();
 
     // Send OTP via email
-    const mailOptions = {
-      from: process.env.SENDER_EMAIL,
-      to: user.email,
-      subject: "Delete Account Verification OTP",
-      text: `Your OTP to delete your account is ${otp}. It is valid for 10 minutes.`,
-    };
+    const subject = "Delete Account OTP";
+    const html = `<p>Your OTP to delete your account is <strong>${otp}</strong>. It is valid for 10 minutes.</p>`;
 
-    await transporter.sendMail(mailOptions);
+    await sendEmail(user.email, subject, html);
 
     return res.status(200).json({
       success: true,
-      message: "Delete account OTP sent successfully",
+      message: "OTP sent to your email",
     });
-
   } catch (error) {
     console.error("Error sending delete account OTP:", error);
     return res.status(500).json({
@@ -406,12 +476,20 @@ const sendDeleteAccountOtp = async (req, res) => {
     });
   }
 };
+
 // DELETE ACCOUNT CONTROLLER
 const deleteAccountController = async (req, res) => {
-  try {
-    const userId = req.user.id; // Get user ID from auth middleware (decoded JWT)
+  const { email, otp } = req.body;
 
-    const user = await User.findByIdAndDelete(userId);
+  if (!email || !otp) {
+    return res.status(400).json({
+      success: false,
+      message: "Email and OTP are required",
+    });
+  }
+
+  try {
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -419,20 +497,59 @@ const deleteAccountController = async (req, res) => {
       });
     }
 
-    res.clearCookie("token"); // Optional: clear auth token cookie
+    //     if (user.verifyOtp !== otp || user.verifyOtpExpireAt < Date.now()) {
+    //       return res.status(400).json({
+    //         success: false,
+    //         message: "Invalid or expired OTP",
+    //       });
+    //     }
+
+    //     await User.findByIdAndDelete(userId);
+    //     res.clearCookie("token");
+
+    //     return res.status(200).json({
+    //       success: true,
+    //       message: "User account deleted successfully",
+    //     });
+    //   } catch (error) {
+    //     console.error("Error deleting account:", error);
+    //     return res.status(500).json({
+    //       success: false,
+    //       message: "Failed to delete account",
+    //     });
+    //   }
+    // };
+    const isOtpExpired = user.resetOtpExpireAt < Date.now();
+    const isOtpMatched = user.resetOtp === otp;
+
+    if (!isOtpMatched) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP",
+      });
+    }
+
+    if (isOtpExpired) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP has expired",
+      });
+    }
+
+    await User.deleteOne({ _id: user._id });
+
     return res.status(200).json({
       success: true,
-      message: "User account deleted successfully",
+      message: "Account deleted successfully",
     });
   } catch (error) {
-    console.error("Error deleting account:", error);
+    console.error("Account deletion error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to delete account",
     });
   }
 };
-
 
 // Exporting the controller functions
 export {
@@ -445,5 +562,5 @@ export {
   verifyEmail,
   isAuthenticated,
   sendDeleteAccountOtp,
-  deleteAccountController
+  deleteAccountController,
 };

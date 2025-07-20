@@ -1,33 +1,32 @@
 import express from 'express';
-import { isAuthenticated, loginController, logoutController, registerController, 
-        sendResetOtp, sendVerifyOtp, verifyEmail, resetPasswordController,
-        deleteAccountController, 
-        sendDeleteAccountOtp} from '../controllers/authController.js';
+import {
+  registerController,
+  loginController,
+  logoutController,
+  sendResetOtp,
+  resetPasswordController,
+  sendVerifyOtp,
+  verifyEmail,
+  isAuthenticated,
+  sendDeleteAccountOtp,
+  deleteAccountController
+} from '../controllers/authController.js';
 import userAuth from '../middleware/userAuth.js';
+
 const authRoutes = express.Router();
 
-// Register
+// ✅ Public routes
 authRoutes.post('/register', registerController);
-// Login
 authRoutes.post('/login', loginController);
-// Logout
 authRoutes.post('/logout', logoutController);
-//send verify otp
-authRoutes.post('/send-verify-otp', userAuth, sendVerifyOtp);
-// Verify Email using OTP
-authRoutes.post('/verify-account', userAuth, verifyEmail )
-// This function checks if the user is authenticated
-authRoutes.post('/is-auth', userAuth, isAuthenticated)
-// send reset password otp
 authRoutes.post('/send-reset-otp', sendResetOtp);
-// Reset Password
 authRoutes.post('/reset-password', resetPasswordController);
-// send delete account otp
-authRoutes.post('/send-delete-account-otp', userAuth, sendDeleteAccountOtp);
-// delet account
-authRoutes.delete("/delete-account", userAuth, deleteAccountController);
 
+// ✅ Protected routes (require authentication)
+authRoutes.post('/send-verify-otp', userAuth, sendVerifyOtp);
+authRoutes.post('/verify-account', userAuth, verifyEmail);
+authRoutes.post('/is-auth', userAuth, isAuthenticated);
+authRoutes.post('/send-delete-account-otp', userAuth, sendDeleteAccountOtp);
+authRoutes.delete('/delete-account', userAuth, deleteAccountController);
 
 export default authRoutes;
-
-
