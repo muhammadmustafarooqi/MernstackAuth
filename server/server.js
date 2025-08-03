@@ -7,7 +7,7 @@ import router from "./routes/routes.js";
 
 const app = express();
 app.use(express.json());
-app.use(cors({Credentials: true}));
+app.use(cors({credentials: true}));
 app.use(cookieParser());
 
 dbConnection();
